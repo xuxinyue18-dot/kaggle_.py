@@ -72,8 +72,7 @@ def stratified_sample(df: pd.DataFrame, rows: int, target: str, seed: int):
     if rows and len(df) > rows:
         frac = rows / len(df)
         sampled = (
-            df.groupby(target, group_keys=False)
-            .apply(lambda g: g.sample(frac=frac, random_state=seed))
+            df.groupby(target, group_keys=False).sample(frac=frac, random_state=seed)
             .sample(frac=1.0, random_state=seed)
             .reset_index(drop=True)
         )

@@ -35,8 +35,7 @@ def stratified_sample(df: pd.DataFrame, rows: int | None) -> pd.DataFrame:
     if rows and len(df) > rows:
         frac = rows / len(df)
         return (
-            df.groupby(TARGET, group_keys=False)
-            .apply(lambda g: g.sample(frac=frac, random_state=SEED))
+            df.groupby(TARGET, group_keys=False).sample(frac=frac, random_state=SEED)
             .sample(frac=1.0, random_state=SEED)
             .reset_index(drop=True)
         )

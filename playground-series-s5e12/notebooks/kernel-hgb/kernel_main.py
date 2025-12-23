@@ -125,8 +125,7 @@ def main():
         ]
         frac = min(1.0, TUNE_ROWS / len(train))
         sample = (
-            train.groupby(TARGET, group_keys=False)
-            .apply(lambda g: g.sample(frac=frac, random_state=SEED))
+            train.groupby(TARGET, group_keys=False).sample(frac=frac, random_state=SEED)
             .sample(frac=1.0, random_state=SEED)
             .reset_index(drop=True)
         )
@@ -149,8 +148,7 @@ def main():
     if CV_ROWS and len(train) > CV_ROWS:
         frac = CV_ROWS / len(train)
         sampled = (
-            train.groupby(TARGET, group_keys=False)
-            .apply(lambda g: g.sample(frac=frac, random_state=SEED))
+            train.groupby(TARGET, group_keys=False).sample(frac=frac, random_state=SEED)
             .sample(frac=1.0, random_state=SEED)
             .reset_index(drop=True)
         )

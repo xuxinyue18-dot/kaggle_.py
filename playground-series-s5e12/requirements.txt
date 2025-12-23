@@ -1,0 +1,7 @@
+numpy
+pandas
+scikit-learn
+
+# Optional (recommended to run on Kaggle/Colab/PC if Termux wheels unavailable)
+# catboost
+# lightgbm
