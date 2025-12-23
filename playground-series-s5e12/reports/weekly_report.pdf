@@ -4,57 +4,165 @@
 << /Type /Catalog /Pages 2 0 R >>
 endobj
 2 0 obj
-<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+<< /Type /Pages /Kids [4 0 R 6 0 R] /Count 2 >>
 endobj
 3 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> >>
-endobj
-4 0 obj
-<< /Length 592 >>
+<< /Length 2448 >>
 stream
 BT
-/F1 12 Tf
-/F1 16 Tf
-72 740 Td
-(Weekly Report - Playground Series S5E12) Tj
-0 -16 Td
-/F1 12 Tf
-0 -16 Td
-(Date: 2025-12-23) Tj
-0 -16 Td
+/F1 11 Tf
+54 727 Td
+(周报｜Playground Series S5E12) Tj
+0 -14 Td
 () Tj
-0 -16 Td
-(Summary) Tj
-0 -16 Td
-(- Added repo structure \(data/notebooks/src/reports\).) Tj
-0 -16 Td
-(- Implemented HGB baseline + simple feature engineering.) Tj
-0 -16 Td
-(- Implemented objective-weight composite feature \(entropy + CRITIC\).) Tj
-0 -16 Td
-(- Added CatBoost/LightGBM baseline script \(run outside Termux if wheels unavailable\).) Tj
-0 -16 Td
+0 -14 Td
 () Tj
-0 -16 Td
-(Notes) Tj
-0 -16 Td
-(- Raw data is not committed; see data/README.md.) Tj
+0 -14 Td
+(日期：2025-12-23) Tj
+0 -14 Td
+(仓库：xuxinyue18-dot/kaggle_.py（项目合集）) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(1. 本周目标) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(• 将 S5E12 项目整理为统一目录结构，便于后续继续往同一仓库追加其他 Kaggle 项目) Tj
+0 -14 Td
+(• 提供可复用的 baseline 脚本与数据下载说明，避免上传原始数据) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(2. 本周完成) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(• 统一目录结构：`data/`、`notebooks/`、`src/`、`reports/`) Tj
+0 -14 Td
+(• 添加数据下载说明：`playground-series-s5e12/data/README.md`) Tj
+0 -14 Td
+(• 迁移并整理训练脚本（输出统一写入 `reports/`）) Tj
+0 -14 Td
+(  • `src/baseline_hgb.py`：HGB baseline + 简单特征工程) Tj
+0 -14 Td
+(  • `src/objective_weight_model.py`：entropy + CRITIC 融合的 objective_score 特征) Tj
+0 -14 Td
+(  • `src/cat_lgbm_models.py`：CatBoost / LightGBM baseline（需在有可用 wheels 的环境运行）) Tj
+0 -14 Td
+(• 增加 `.gitignore`：默认忽略 `*.csv/*.zip` 等数据与提交文件，避免把大文件推到 GitHub) Tj
+0 -14 Td
+(• 保留 Kaggle kernel 入口脚本（`.py` + metadata）：`playground-series-s5e12/notebooks/`) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(3. 运行方式) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(1\) 下载数据到 playground-series-s5e12/data/raw/（不进 git）) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(• 需要：`train.csv`、`test.csv`（可选：`sample_submission.csv`）) Tj
+0 -14 Td
+(• 参考：`playground-series-s5e12/data/README.md`) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(2\) 运行脚本（示例）) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  python playground-series-s5e12/src/baseline_hgb.py) Tj
+0 -14 Td
+(  python playground-series-s5e12/src/objective_weight_model.py) Tj
+0 -14 Td
+(  python playground-series-s5e12/src/cat_lgbm_models.py --model catboost) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(4. 实验与结果（待补充）) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(说明：当前仓库以“结构与可复现”为主；具体 CV 分数需要在有数据文件的环境里运行后再补齐。) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(• HGB baseline：CV AUC = TBD) Tj
+0 -14 Td
+(• Objective score（entropy+CRITIC）：CV AUC = TBD) Tj
+0 -14 Td
+(• CatBoost / LightGBM：CV AUC = TBD) Tj
 ET
 endstream
 endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 3 0 R /Resources << /Font << /F1 7 0 R >> >> >> >>
+endobj
 5 0 obj
+<< /Length 618 >>
+stream
+BT
+/F1 11 Tf
+54 727 Td
+() Tj
+0 -14 Td
+(5. 风险与注意事项) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(• Termux 环境可能无法安装 `catboost/lightgbm` 的预编译 wheel，建议在 Kaggle Notebook / Colab / PC 上运行对应脚本) Tj
+0 -14 Td
+(• GitHub 对单文件大小有建议上限（50MB），本仓库默认不上传原始数据与提交文件) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(6. 下周计划) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(• 在 Kaggle Notebook 跑通三套 baseline，记录 CV 与 leaderboard 分数) Tj
+0 -14 Td
+(• 将结果写回本周报的“实验与结果”部分) Tj
+ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 7 0 R >> >> >> >>
+endobj
+7 0 obj
 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
 endobj
 xref
-0 6
+0 8
 0000000000 65535 f 
 0000000015 00000 n 
 0000000064 00000 n 
-0000000121 00000 n 
-0000000250 00000 n 
-0000000893 00000 n 
+0000000127 00000 n 
+0000002627 00000 n 
+0000002756 00000 n 
+0000003425 00000 n 
+0000003554 00000 n 
 trailer
-<< /Size 6 /Root 1 0 R >>
+<< /Size 8 /Root 1 0 R >>
 startxref
-963
+3624
 %%EOF
