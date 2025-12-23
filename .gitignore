@@ -29,3 +29,6 @@ catboost_info/
 
 # Project-specific raw data location
 playground-series-s5e12/data/raw/
+
+# Local Kaggle datasets cache (do not push)
+kaggle_datasets/
