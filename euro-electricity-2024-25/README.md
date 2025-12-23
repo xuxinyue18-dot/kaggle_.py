@@ -91,8 +91,8 @@
 运行 `python generate_report.py` 后主要输出：
 
 - `reports/weekly_report.pdf`
-- `reports/final_report_template.md`（总报告模板）
-- `reports/final_report.pdf`（总报告：文字 + 图表 + 摘要）
+- `reports/final_report_template.md`（总报告模板：仅首次生成；默认不覆盖）
+- `reports/final_report.pdf`（总报告：文字 + 图表 + 摘要；每次运行都会更新）
 - `reports/weekly_review.md`
 - `reports/weekly_features_pl.csv`（周频特征表，便于你继续扩展）
 - `backtest_results/walk_forward_predictions.csv`（每周预测、覆盖与方向结果）
@@ -141,4 +141,10 @@ python generate_report.py --train-window-weeks 26 --review-weeks 8
 
 ```bash
 python generate_report.py --train-window-weeks 52 --review-weeks 8 --spike-window-weeks 8 --min-week-hours 160
+```
+
+如果需要更新总报告模板（平时不需要），可以显式覆盖：
+
+```bash
+python generate_report.py --overwrite-final-template
 ```
