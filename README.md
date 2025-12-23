@@ -13,6 +13,20 @@ Kaggle 项目合集仓库（monorepo）。每个比赛/实验放在一个独立�
 - `src/`：可复用的训练/特征工程代码
 - `reports/weekly_report.pdf`：阶段性汇报
 
+## Add a new project
+
+用脚手架快速生成标准结构：
+
+```bash
+python scripts/new_project.py <project_dir_name> --title "<Display Title>"
+```
+
+示例：
+
+```bash
+python scripts/new_project.py playground-series-s5e13 --title "Playground Series S5E13"
+```
+
 ## Quick start (S5E12)
 
 1) 下载数据（不进 git）
