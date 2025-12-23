@@ -326,8 +326,10 @@ def _plot_pred_error(bt: pd.DataFrame, out_path: Path) -> None:
     plt.close(fig)
 
 
-def _write_final_report_template_md(out_path: Path) -> None:
+def _write_final_report_template_md(out_path: Path, *, overwrite: bool) -> bool:
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    if out_path.exists() and not overwrite:
+        return False
     template = """# Final report template (Markdown)
 
 This file is a **format/style template** for the comprehensive PDF report.
@@ -369,9 +371,10 @@ Include:
 For the recent N weeks (configurable), include:
 - One-line conclusion (interval coverage + direction hit/miss)
 - Possible drivers (risk hours, ramps, pumped behavior changes)
-- Risk note + next-week watchlist
+    - Risk note + next-week watchlist
 """
     out_path.write_text(template, encoding="utf-8")
+    return True
 
 
 def _add_text_page(pdf: PdfPages, title: str, lines: list[str]) -> None:
@@ -834,6 +837,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--backtest-dir", type=Path, default=Path("backtest_results"))
     parser.add_argument("--final-template", type=Path, default=Path("reports/final_report_template.md"))
     parser.add_argument("--final-pdf", type=Path, default=Path("reports/final_report.pdf"))
+    parser.add_argument("--overwrite-final-template", action="store_true")
     args = parser.parse_args(argv)
 
     cols = Columns()
@@ -917,7 +921,7 @@ def main(argv: list[str] | None = None) -> int:
         lookback=args.review_weeks,
     )
 
-    _write_final_report_template_md(args.final_template)
+    wrote_template = _write_final_report_template_md(args.final_template, overwrite=bool(args.overwrite_final_template))
     _write_final_report_pdf(
         args.final_pdf,
         df=df,
@@ -934,7 +938,8 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     print(f"Wrote: {pdf_path}")
-    print(f"Wrote: {args.final_template}")
+    if wrote_template:
+        print(f"Wrote: {args.final_template}")
     print(f"Wrote: {args.final_pdf}")
     print(f"Wrote: {args.backtest_dir}")
     return 0
