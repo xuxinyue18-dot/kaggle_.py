@@ -36,11 +36,12 @@ python playground-series-s5e12/src/cat_lgbm_models.py --model catboost
 
 ## 4. 实验与结果（待补充）
 
-说明：当前仓库以“结构与可复现”为主；具体 CV 分数需要在有数据文件的环境里运行后再补齐。
+说明：以下为本地/Kernel 运行得到的离线验证分数（ROC-AUC）。Kaggle Public/Private LB 分数未在本周报中记录。
 
-- HGB baseline：CV AUC = TBD
-- Objective score（entropy+CRITIC）：CV AUC = TBD
-- CatBoost / LightGBM：CV AUC = TBD
+- HGB baseline（特征工程版）：CV ROC-AUC = 0.7150 ± 0.0027（3-fold；分层抽样 200,000 行；带轻量调参）
+- Objective score（entropy+CRITIC）：CV ROC-AUC = 0.6947 ± 0.0005（2-fold；分层抽样 30,000 行；训练抽样 150,000 行）
+- CatBoost：CV AUC = 0.7183 ± 0.0039（3-fold；分层抽样 200,000 行）
+- LightGBM：未跑（Termux 环境可能缺 wheel；建议在 Kaggle/Colab/PC 环境运行）
 
 ## 5. 风险与注意事项
 
@@ -49,5 +50,5 @@ python playground-series-s5e12/src/cat_lgbm_models.py --model catboost
 
 ## 6. 下周计划
 
-- 在 Kaggle Notebook 跑通三套 baseline，记录 CV 与 leaderboard 分数
-- 将结果写回本周报的“实验与结果”部分
+- 本项目已按统一结构整理并记录关键离线分数，阶段性收尾
+- 后续如需要：补充 Kaggle Public/Private LB 分数与提交配置说明
