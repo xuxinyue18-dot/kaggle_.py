@@ -91,6 +91,8 @@
 运行 `python generate_report.py` 后主要输出：
 
 - `reports/weekly_report.pdf`
+- `reports/final_report_template.md`（总报告模板）
+- `reports/final_report.pdf`（总报告：文字 + 图表 + 摘要）
 - `reports/weekly_review.md`
 - `reports/weekly_features_pl.csv`（周频特征表，便于你继续扩展）
 - `backtest_results/walk_forward_predictions.csv`（每周预测、覆盖与方向结果）
