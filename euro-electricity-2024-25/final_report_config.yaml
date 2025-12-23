@@ -1,0 +1,16 @@
+# Optional config file for generate_report.py
+# CLI arguments take precedence when you explicitly set them.
+#
+# Notes:
+# - Keep `only_final: false` here because CLI has `--only-final` but no `--no-only-final`.
+# - Use `--archive` when you want a timestamped snapshot under reports/runs/.
+
+only_final: false
+archive: false
+fast: false
+no_cache: false
+
+review_weeks: 8
+train_window_weeks: 52
+spike_window_weeks: 8
+min_week_hours: 160

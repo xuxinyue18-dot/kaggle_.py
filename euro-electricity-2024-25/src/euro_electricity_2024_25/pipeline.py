@@ -5,12 +5,16 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 from textwrap import wrap
+import hashlib
+import shutil
+from datetime import datetime
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.image import imread
+import yaml
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 from sklearn.metrics import ConfusionMatrixDisplay, f1_score
 
@@ -194,10 +198,12 @@ def _walk_forward_backtest(
     supervised: pd.DataFrame,
     feature_cols: list[str],
     train_window_weeks: int,
+    *,
+    fast: bool,
 ) -> pd.DataFrame:
     rows: list[dict] = []
-    x_all = supervised[feature_cols]
-    y_all = supervised["next_week_price_mean"].astype("float64")
+    _ = supervised[feature_cols]
+    _ = supervised["next_week_price_mean"].astype("float64")
 
     for i in range(train_window_weeks, len(supervised)):
         train = supervised.iloc[i - train_window_weeks : i]
@@ -212,14 +218,15 @@ def _walk_forward_backtest(
         theta = float(0.25 * delta_hist.std(ddof=0))
 
         y_dir_train = delta_hist.apply(lambda d: _direction_label(float(d), theta))
-        clf = HistGradientBoostingClassifier(random_state=42)
+        clf = HistGradientBoostingClassifier(random_state=42, max_iter=(50 if fast else 200))
         clf.fit(x_train, y_dir_train)
 
         # Quantile regressors for interval.
+        max_iter = 60 if fast else 250
         q_models = {
-            0.1: HistGradientBoostingRegressor(loss="quantile", quantile=0.1, random_state=42),
-            0.5: HistGradientBoostingRegressor(loss="quantile", quantile=0.5, random_state=42),
-            0.9: HistGradientBoostingRegressor(loss="quantile", quantile=0.9, random_state=42),
+            0.1: HistGradientBoostingRegressor(loss="quantile", quantile=0.1, random_state=42, max_iter=max_iter),
+            0.5: HistGradientBoostingRegressor(loss="quantile", quantile=0.5, random_state=42, max_iter=max_iter),
+            0.9: HistGradientBoostingRegressor(loss="quantile", quantile=0.9, random_state=42, max_iter=max_iter),
         }
         for m in q_models.values():
             m.fit(x_train, y_train)
@@ -255,26 +262,25 @@ def _walk_forward_backtest(
     return pd.DataFrame(rows)
 
 
-def _plot_interval_backtest(bt: pd.DataFrame, out_path: Path) -> None:
+def _make_interval_backtest_fig(bt: pd.DataFrame) -> plt.Figure | None:
     if bt.empty:
-        return
+        return None
     bt = bt.loc[bt["target_week_start_local"].notna()].copy()
     x = pd.to_datetime(bt["target_week_start_local"])
     fig, ax = plt.subplots(figsize=(12, 4))
-    ax.fill_between(x, bt["q10"], bt["q90"], color="tab:blue", alpha=0.2, label="pred [P10,P90]")
-    ax.plot(x, bt["q50"], color="tab:blue", lw=1.5, label="pred P50")
-    ax.plot(x, bt["next_week_price_mean"], color="black", lw=1.2, label="actual")
-    ax.set_title("Walk-forward: next-week mean price interval")
+    ax.fill_between(x, bt["q10"], bt["q90"], color="tab:blue", alpha=0.2, label="预测区间[P10,P90]")
+    ax.plot(x, bt["q50"], color="tab:blue", lw=1.5, label="预测P50")
+    ax.plot(x, bt["next_week_price_mean"], color="black", lw=1.2, label="实际")
+    ax.set_title("滚动回测：下周均价分位区间")
     ax.set_ylabel("€/MWh")
     ax.legend(loc="upper left", frameon=False)
     fig.tight_layout()
-    fig.savefig(out_path, dpi=160)
-    plt.close(fig)
+    return fig
 
 
-def _plot_coverage(bt: pd.DataFrame, out_path: Path) -> None:
+def _make_coverage_fig(bt: pd.DataFrame) -> plt.Figure | None:
     if bt.empty:
-        return
+        return None
     bt = bt.loc[bt["target_week_start_local"].notna()].copy()
     cov = bt["covered_10_90"].astype("int64")
     cum = cov.cumsum() / (np.arange(len(cov)) + 1)
@@ -282,96 +288,100 @@ def _plot_coverage(bt: pd.DataFrame, out_path: Path) -> None:
     ax.plot(pd.to_datetime(bt["target_week_start_local"]), cum, lw=1.5, color="tab:green")
     ax.axhline(0.8, color="black", lw=0.8, alpha=0.4)
     ax.set_ylim(0, 1)
-    ax.set_title("Cumulative coverage of [P10,P90]")
+    ax.set_title("区间覆盖率（累计）[P10,P90]")
     ax.set_ylabel("coverage")
     fig.tight_layout()
-    fig.savefig(out_path, dpi=160)
-    plt.close(fig)
+    return fig
 
 
-def _plot_confusion(bt: pd.DataFrame, out_path: Path) -> float:
+def _make_confusion_fig(bt: pd.DataFrame) -> tuple[plt.Figure | None, float]:
     if bt.empty:
-        return float("nan")
+        return None, float("nan")
     labels = ["Down", "Flat", "Up"]
     y_true = bt["dir_true"].astype(str)
     y_pred = bt["dir_pred"].astype(str)
     macro = float(f1_score(y_true, y_pred, labels=labels, average="macro"))
     fig, ax = plt.subplots(figsize=(5, 5))
     ConfusionMatrixDisplay.from_predictions(y_true, y_pred, labels=labels, ax=ax, colorbar=False, normalize=None)
-    ax.set_title(f"Direction (macro-F1={macro:.3f})")
+    ax.set_title(f"方向预测混淆矩阵（Macro-F1={macro:.3f}）")
     fig.tight_layout()
-    fig.savefig(out_path, dpi=160)
-    plt.close(fig)
-    return macro
+    return fig, macro
 
 
-def _plot_pred_error(bt: pd.DataFrame, out_path: Path) -> None:
+def _make_pred_error_fig(bt: pd.DataFrame) -> plt.Figure | None:
     if bt.empty:
-        return
+        return None
     bt = bt.loc[bt["target_week_start_local"].notna()].copy()
     x = pd.to_datetime(bt["target_week_start_local"])
     err = (bt["next_week_price_mean"] - bt["q50"]).astype("float64")
     miss = ~bt["covered_10_90"].astype(bool)
 
     fig, ax = plt.subplots(figsize=(12, 3.5))
-    ax.plot(x, err, lw=1.2, color="tab:blue", label="actual - pred(P50)")
+    ax.plot(x, err, lw=1.2, color="tab:blue", label="实际 - 预测P50")
     ax.axhline(0, color="black", lw=0.8, alpha=0.5)
     if miss.any():
-        ax.scatter(x[miss], err[miss], s=25, color="tab:red", label="interval miss")
-    ax.set_title("Backtest residuals (next-week mean)")
+        ax.scatter(x[miss], err[miss], s=25, color="tab:red", label="区间未覆盖")
+    ax.set_title("滚动回测残差（下周均价）")
     ax.set_ylabel("€/MWh")
     ax.legend(loc="upper left", frameon=False)
     fig.tight_layout()
+    return fig
+
+
+def _save_fig(fig: plt.Figure | None, out_path: Path, *, close: bool) -> None:
+    if fig is None:
+        return
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=160)
-    plt.close(fig)
+    if close:
+        plt.close(fig)
 
 
 def _write_final_report_template_md(out_path: Path, *, overwrite: bool) -> bool:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if out_path.exists() and not overwrite:
         return False
-    template = """# Final report template (Markdown)
+    template = """# 总报告模板（Markdown）
 
-This file is a **format/style template** for the comprehensive PDF report.
-The comprehensive PDF report is generated by `python generate_report.py` and should follow
-the same section structure.
+说明：本文件是“综合性总报告 PDF”的**固定格式模板**，用于统一章节结构与写作口径。
+综合性总报告 PDF 会由 `python generate_report.py` 自动生成，并遵循这里的章节结构。
 
-## 1. Overview
+## 1. 概览
 
-- Market: {country}
-- Timezone: {market_tz}
-- Data coverage: {data_start_local} → {data_end_local}
-- Report generated at: {generated_at_local}
+- 市场：{country}
+- 时区：{market_tz}
+- 数据覆盖：{data_start_local} → {data_end_local}
+- 生成时间：{generated_at_local}
 
-## 2. Key takeaways (auto summary)
+## 2. 关键结论（自动摘要）
 
-- Latest week price: mean={latest_price_mean}, P10={latest_price_p10}, P90={latest_price_p90}
-- Risk hours: neg={latest_neg_hours}, spike={latest_spike_hours}
-- Pumped storage: pump_hours={latest_pump_hours}, gen_hours={latest_gen_hours}, net_mean={latest_pumped_net_mean}
-- Backtest: macro_f1={macro_f1}, coverage_10_90={coverage_10_90}
+- 最新周价格：均值={latest_price_mean}，P10={latest_price_p10}，P90={latest_price_p90}
+- 风险小时：负价={latest_neg_hours}，尖峰={latest_spike_hours}
+- 抽蓄：吸纳小时={latest_pump_hours}，发电小时={latest_gen_hours}，净出力均值={latest_pumped_net_mean}
+- 回测：macro_f1={macro_f1}，coverage_10_90={coverage_10_90}
 
-## 3. Latest week deep dive
+## 3. 最新周拆解（图 + 解读）
 
-Include:
-- Hourly price (this week vs previous week)
-- Price distribution for the latest week
-- Generation mix (stacked)
-- Pumped-net time series
+包含：
+- 本周 vs 上周小时价曲线
+- 本周价格分布（含分位点）
+- 本周发电结构堆叠（MW）
+- 本周抽蓄净出力（MW）
 
-## 4. Backtest summary
+## 4. 回测概览（图 + 解读）
 
-Include:
-- Interval backtest (P10–P90 band + actual)
-- Coverage over time
-- Direction confusion matrix
-- Residuals over time (actual - P50), marking interval misses
+包含：
+- 区间回测（P10–P90 带状 + 实际）
+- 覆盖率随时间变化
+- 方向预测混淆矩阵
+- 残差曲线（实际 - P50）并标注未覆盖点
 
-## 5. Weekly review (narrative)
+## 5. 逐周复盘（文字分析）
 
-For the recent N weeks (configurable), include:
-- One-line conclusion (interval coverage + direction hit/miss)
-- Possible drivers (risk hours, ramps, pumped behavior changes)
-    - Risk note + next-week watchlist
+对最近 N 周（可配置）逐周输出：
+- 一句话结论（区间覆盖 + 方向命中/未命中）
+- 可能驱动（风险小时、爬坡压力、抽蓄行为切换）
+- 风险提示 + 下周关注点
 """
     out_path.write_text(template, encoding="utf-8")
     return True
@@ -429,9 +439,10 @@ def _plot_image_grid_page(pdf: PdfPages, title: str, items: list[tuple[str, Path
     plt.close(fig)
 
 
-def _write_final_report_pdf(
-    out_path: Path,
+def _write_final_report(
     *,
+    pdf_final: PdfPages,
+    pdf_weekly: PdfPages | None,
     df: pd.DataFrame,
     weekly: pd.DataFrame,
     bt: pd.DataFrame,
@@ -442,10 +453,9 @@ def _write_final_report_pdf(
     train_window_weeks: int,
     min_week_hours: int,
     review_weeks: int,
-    backtest_dir: Path,
+    backtest_figs: dict[str, plt.Figure | None],
+    weekly_review_path: Path,
 ) -> None:
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
     latest = _latest_full_week_start(weekly)
     w = weekly.set_index("week_start_local").sort_index()
     latest_row = w.loc[latest]
@@ -467,66 +477,123 @@ def _write_final_report_pdf(
     spread = float(p_gen - p_pump) if pd.notna(p_pump) and pd.notna(p_gen) else float("nan")
 
     cover_lines = [
-        f"- Market: {country}",
-        f"- Timezone: {market_tz}",
-        f"- Data coverage: {start_local} → {end_local}",
-        f"- Generated at: {generated_at}",
+        f"- 市场：{country}",
+        f"- 时区：{market_tz}",
+        f"- 数据覆盖：{start_local} → {end_local}",
+        f"- 生成时间：{generated_at}",
         "",
-        "Latest week snapshot:",
-        f"- Week start (local): {latest}",
-        f"- Price mean: {latest_row['price_mean']:.2f} €/MWh (WoW {delta:+.2f})",
-        f"- Price P10–P90: {latest_row['price_p10']:.2f} → {latest_row['price_p90']:.2f} €/MWh",
-        f"- Risk hours: neg={int(latest_row['neg_hours'])}, spike={int(latest_row['spike_hours'])}",
-        f"- Pumped: pump_hours={int(latest_row['pumped_pump_hours'])}, gen_hours={int(latest_row['pumped_gen_hours'])}, net_mean={latest_row['pumped_net_mean']:.2f} MW",
-        f"- Pumped spread proxy (generate - pump): {spread:.2f} €/MWh",
+        "最新周摘要：",
+        f"- 周起点（本地）：{latest}",
+        f"- 周均价：{latest_row['price_mean']:.2f} €/MWh（环比 {delta:+.2f}）",
+        f"- 价格分位（P10–P90）：{latest_row['price_p10']:.2f} → {latest_row['price_p90']:.2f} €/MWh",
+        f"- 风险小时：负价={int(latest_row['neg_hours'])}，尖峰={int(latest_row['spike_hours'])}",
+        f"- 抽蓄：吸纳小时={int(latest_row['pumped_pump_hours'])}，发电小时={int(latest_row['pumped_gen_hours'])}，净出力均值={latest_row['pumped_net_mean']:.2f} MW",
+        f"- 抽蓄价差代理（发电均价 - 吸纳均价）：{spread:.2f} €/MWh",
         "",
-        "Backtest snapshot (walk-forward, weekly):",
-        f"- Train window: {train_window_weeks} weeks | min_week_hours={min_week_hours}",
-        f"- Spike window: {spike_window_weeks} weeks",
-        f"- Direction macro-F1: {macro_f1:.3f}",
-        f"- Interval coverage (P10–P90): {coverage:.3f} | miss rate≈{miss_rate:.0%}",
-        f"- MAE(|actual - P50|): {mae:.2f} €/MWh",
+        "滚动回测摘要（周频）：",
+        f"- 训练窗口：{train_window_weeks} 周｜完整周阈值：n_hours≥{min_week_hours}",
+        f"- 尖峰窗口：{spike_window_weeks} 周（滚动 P99，shift=1）",
+        f"- 方向预测 Macro-F1：{macro_f1:.3f}",
+        f"- 区间覆盖率（P10–P90）：{coverage:.3f}｜未覆盖比例≈{miss_rate:.0%}",
+        f"- MAE（|实际 - P50|）：{mae:.2f} €/MWh",
     ]
 
-    with PdfPages(out_path) as pdf:
-        _add_text_page(pdf, title="Final report", lines=cover_lines)
+    _add_text_page(pdf_final, title="综合性总报告", lines=cover_lines)
 
-        method_lines = [
-            "Pipeline:",
-            "1) Parse datetime to UTC and convert to market timezone.",
-            "2) Build hourly features: risk flags (neg/spike), pumped-net and modes, mix shares, ramps.",
-            "3) Aggregate to weekly table (Monday 00:00 local): price stats + risk hours + pumped behavior + mix.",
-            "4) Supervised targets: next_week_price_mean and delta.",
-            "5) Walk-forward backtest (weekly):",
-            "   - Direction (Up/Down/Flat) with adaptive threshold theta=0.25*std(delta_history).",
-            "   - Interval (P10/P50/P90) via quantile regression (HistGradientBoostingRegressor, loss=quantile).",
-            "6) Outputs: weekly report PDF, review narrative, backtest figures, and this final report PDF.",
-        ]
-        _add_text_page(pdf, title="Methods and pipeline", lines=method_lines)
+    method_lines = [
+        "流程路线：",
+        "1) 解析 datetime 到 UTC，并转换为市场时区。",
+        "2) 构造小时特征：风险标记（负价/尖峰）、抽蓄净出力与模式、结构占比、爬坡压力等。",
+        "3) 聚合周频表（本地周一 00:00）：价格统计 + 风险小时 + 抽蓄行为 + 结构/压力。",
+        "4) 监督学习目标：next_week_price_mean（下周均价）与 delta（周均价变化）。",
+        "5) 周频滚动回测（walk-forward）：",
+        "   - 方向：Up/Down/Flat（三分类），阈值 θ=0.25*std(delta_history)。",
+        "   - 区间：P10/P50/P90（分位回归，HistGradientBoostingRegressor，loss=quantile）。",
+        "6) 产物：周报 PDF、逐周复盘文本、回测图表、以及本综合性总报告。",
+    ]
+    _add_text_page(pdf_final, title="方法与流程", lines=method_lines)
 
-        _plot_week_report_page1(df=df, weekly=weekly, out_pdf=pdf)
-        _plot_week_report_page2(weekly=weekly, bt=bt, macro_f1=macro_f1, out_pdf=pdf)
+    # Weekly pages: written once, saved into both PDFs if weekly is enabled.
+    week_pdfs: list[PdfPages] = [pdf_final] + ([pdf_weekly] if pdf_weekly is not None else [])
+    _plot_week_report_page1(df=df, weekly=weekly, pdfs=week_pdfs)
+    _plot_week_report_page2(weekly=weekly, bt=bt, macro_f1=macro_f1, pdfs=week_pdfs)
 
-        _plot_image_grid_page(
-            pdf,
-            title="Backtest diagnostics (figures)",
-            items=[
-                ("Direction confusion", backtest_dir / "direction_confusion.png"),
-                ("Residuals over time", backtest_dir / "pred_error_over_time.png"),
-                ("Coverage over time", backtest_dir / "coverage_over_time.png"),
-                ("Interval backtest", backtest_dir / "interval_backtest.png"),
-            ],
-        )
+    # Backtest figures as pages (in-memory).
+    for k in ["interval", "coverage", "confusion", "pred_error"]:
+        fig = backtest_figs.get(k)
+        if fig is not None:
+            pdf_final.savefig(fig)
 
-        narrative_lines = [
-            f"- A narrative review is generated at: reports/weekly_review.md (recent {review_weeks} weeks).",
-            "- Use it as a structured log: conclusion → possible drivers → risk note → next-week watchlist.",
-            "",
-            "Notes:",
-            "- Interval coverage is sensitive to tail events and regime changes.",
-            "- If miss rate is high, increase train window, enrich features, or adjust thresholds.",
-        ]
-        _add_text_page(pdf, title="Review notes", lines=narrative_lines)
+    narrative_lines = [
+        f"- 逐周复盘（最近 {review_weeks} 周）会写入：{weekly_review_path}",
+        "- 本总报告会把复盘文本按页嵌入到 PDF 中，确保“文字 + 图表 + 文字分析”在一个文件内。",
+        "",
+        "备注：",
+        "- 区间覆盖率对尾部事件/制度性变化更敏感。",
+        "- 若未覆盖比例偏高，可尝试：加大训练窗口、丰富特征、或调整阈值/模型复杂度。",
+    ]
+    _add_text_page(pdf_final, title="复盘说明", lines=narrative_lines)
+
+    review_lines = _read_text_file_for_pdf(weekly_review_path, max_lines=900)
+    _add_text_page(pdf_final, title="逐周复盘（摘录）", lines=review_lines)
+
+
+def _read_text_file_for_pdf(path: Path, *, max_lines: int) -> list[str]:
+    if not path.exists():
+        return [f"（未找到文件）{path}"]
+    text = path.read_text(encoding="utf-8", errors="replace")
+    lines = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            lines.append("")
+            continue
+        # minimal markdown cleanup
+        line = line.lstrip("#").strip()
+        if line.startswith("- "):
+            line = "- " + line[2:]
+        lines.append(line)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines] + ["", "（内容过长，已截断）"]
+    return lines
+
+
+def _cache_key(csv_path: Path, args: argparse.Namespace, *, feature_version: str) -> str:
+    st = csv_path.stat()
+    payload = {
+        "csv": str(csv_path.resolve()),
+        "size": st.st_size,
+        "mtime": int(st.st_mtime),
+        "country": args.country,
+        "market_tz": args.market_tz,
+        "spike_window_weeks": args.spike_window_weeks,
+        "min_week_hours": args.min_week_hours,
+        "train_window_weeks": args.train_window_weeks,
+        "review_weeks": args.review_weeks,
+        "fast": bool(args.fast),
+        "feature_version": feature_version,
+    }
+    b = yaml.safe_dump(payload, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(b).hexdigest()[:16]
+
+
+def _maybe_load_config(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _apply_config_defaults(args: argparse.Namespace, defaults: dict, cfg: dict) -> None:
+    # Only override values that are still at parser defaults.
+    for k, v in cfg.items():
+        if not hasattr(args, k) or k not in defaults:
+            continue
+        if getattr(args, k) == defaults[k]:
+            setattr(args, k, v)
 
 
 def _write_weekly_review(
@@ -720,7 +787,7 @@ def _latest_full_week_start(weekly: pd.DataFrame) -> pd.Timestamp:
     return weekly["week_start_local"].iloc[-1]
 
 
-def _plot_week_report_page1(df: pd.DataFrame, weekly: pd.DataFrame, out_pdf: PdfPages) -> None:
+def _plot_week_report_page1(df: pd.DataFrame, weekly: pd.DataFrame, pdfs: list[PdfPages]) -> None:
     latest = _latest_full_week_start(weekly)
     w = weekly.set_index("week_start_local").sort_index()
     prev = w.index[w.index.get_loc(latest) - 1] if w.index.get_loc(latest) > 0 else None
@@ -734,7 +801,7 @@ def _plot_week_report_page1(df: pd.DataFrame, weekly: pd.DataFrame, out_pdf: Pdf
     ax.plot(sub_latest["datetime_local"], sub_latest["price"], lw=1.0, label="this week")
     if not sub_prev.empty:
         ax.plot(sub_prev["datetime_local"], sub_prev["price"], lw=1.0, alpha=0.7, label="prev week")
-    ax.set_title("Hourly price: this vs prev week")
+    ax.set_title("小时电价：本周 vs 上周")
     ax.set_ylabel("€/MWh")
     ax.legend(loc="upper left", frameon=False)
 
@@ -744,7 +811,7 @@ def _plot_week_report_page1(df: pd.DataFrame, weekly: pd.DataFrame, out_pdf: Pdf
     p90 = float(sub_latest["price"].quantile(0.90))
     ax.axvline(p10, color="black", lw=0.8, alpha=0.7)
     ax.axvline(p90, color="black", lw=0.8, alpha=0.7)
-    ax.set_title("This week price distribution (P10/P90)")
+    ax.set_title("本周价格分布（P10/P90）")
     ax.set_xlabel("€/MWh")
 
     ax = axes[1, 0]
@@ -761,36 +828,37 @@ def _plot_week_report_page1(df: pd.DataFrame, weekly: pd.DataFrame, out_pdf: Pdf
     )
     labels = ["renewable", "fossil", "nuclear", "other", "pumped_gen"]
     ax.stackplot(t, mix, labels=labels, alpha=0.85)
-    ax.set_title("This week generation mix (MW)")
+    ax.set_title("本周发电结构（MW）")
     ax.set_ylabel("MW")
     ax.legend(loc="upper left", ncols=3, frameon=False)
 
     ax = axes[1, 1]
     ax.plot(sub_latest["datetime_local"], sub_latest["pumped_net_mw"], lw=1.0, color="tab:orange")
     ax.axhline(0, color="black", lw=0.8, alpha=0.5)
-    ax.set_title("This week pumped_net (MW) [gen-consume]")
+    ax.set_title("本周抽蓄净出力（MW）[发电-吸纳]")
     ax.set_ylabel("MW")
 
-    fig.suptitle(f"Weekly market report (PL) — week_start={latest}")
+    fig.suptitle(f"周报图表（PL）— 周起点={latest}")
     fig.tight_layout()
-    out_pdf.savefig(fig)
+    for p in pdfs:
+        p.savefig(fig)
     plt.close(fig)
 
 
-def _plot_week_report_page2(weekly: pd.DataFrame, bt: pd.DataFrame, macro_f1: float, out_pdf: PdfPages) -> None:
+def _plot_week_report_page2(weekly: pd.DataFrame, bt: pd.DataFrame, macro_f1: float, pdfs: list[PdfPages]) -> None:
     fig, axes = plt.subplots(2, 2, figsize=(11.7, 8.3))
 
     ax = axes[0, 0]
     x = weekly["week_start_local"]
     ax.plot(x, weekly["price_mean"], lw=1.2, color="tab:blue")
     ax.fill_between(x, weekly["price_p10"], weekly["price_p90"], color="tab:blue", alpha=0.15)
-    ax.set_title("Weekly price mean and P10–P90 (realized)")
+    ax.set_title("周均价与周内分位（P10–P90）")
     ax.set_ylabel("€/MWh")
 
     ax = axes[0, 1]
     ax.bar(x, weekly["neg_hours"], color="tab:purple", alpha=0.8, label="neg_hours")
     ax.bar(x, weekly["spike_hours"], bottom=weekly["neg_hours"], color="tab:red", alpha=0.6, label="spike_hours")
-    ax.set_title("Weekly risk hours (negative + spike)")
+    ax.set_title("每周风险小时（负价 + 尖峰）")
     ax.set_ylabel("hours")
     ax.legend(loc="upper left", frameon=False)
 
@@ -799,7 +867,7 @@ def _plot_week_report_page2(weekly: pd.DataFrame, bt: pd.DataFrame, macro_f1: fl
         xt = pd.to_datetime(bt["target_week_start_local"])
         ax.fill_between(xt, bt["q10"], bt["q90"], color="tab:green", alpha=0.2, label="pred [P10,P90]")
         ax.plot(xt, bt["next_week_price_mean"], color="black", lw=1.0, label="actual")
-        ax.set_title("Backtest: interval vs actual (next-week mean)")
+        ax.set_title("回测：区间预测 vs 实际（下周均价）")
         ax.set_ylabel("€/MWh")
         ax.legend(loc="upper left", frameon=False)
     else:
@@ -812,134 +880,269 @@ def _plot_week_report_page2(weekly: pd.DataFrame, bt: pd.DataFrame, macro_f1: fl
         ax.plot(pd.to_datetime(bt["target_week_start_local"]), cum, lw=1.5, color="tab:green")
         ax.axhline(0.8, color="black", lw=0.8, alpha=0.4)
         ax.set_ylim(0, 1)
-        ax.set_title(f"Coverage (cum), macro-F1={macro_f1:.3f}")
+        ax.set_title(f"覆盖率（累计）｜Macro-F1={macro_f1:.3f}")
         ax.set_ylabel("coverage")
     else:
         ax.set_axis_off()
 
     fig.tight_layout()
-    out_pdf.savefig(fig)
+    for p in pdfs:
+        p.savefig(fig)
     plt.close(fig)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--csv", type=Path, default=Path("data/raw/entsoe_data_2024_2025.csv"))
-    parser.add_argument("--country", default="PL")
-    parser.add_argument("--market-tz", default="Europe/Warsaw")
-    parser.add_argument("--spike-window-weeks", type=int, default=8)
-    parser.add_argument("--min-mw", type=float, default=1e-6)
+    defaults = {
+        "csv": Path("data/raw/entsoe_data_2024_2025.csv"),
+        "country": "PL",
+        "market_tz": "Europe/Warsaw",
+        "spike_window_weeks": 8,
+        "min_mw": 1e-6,
+        "train_window_weeks": 52,
+        "review_weeks": 8,
+        "min_week_hours": 160,
+        "reports_dir": Path("reports"),
+        "backtest_dir": Path("backtest_results"),
+        "final_template": Path("reports/final_report_template.md"),
+        "final_pdf": Path("reports/final_report.pdf"),
+        "weekly_pdf": Path("reports/weekly_report.pdf"),
+        "config": Path("final_report_config.yaml"),
+        "cache_dir": Path("reports/cache"),
+        "no_cache": False,
+        "fast": False,
+        "only_final": False,
+        "archive": False,
+        "run_id": None,
+        "overwrite_final_template": False,
+    }
 
-    parser.add_argument("--train-window-weeks", type=int, default=52)
-    parser.add_argument("--review-weeks", type=int, default=8)
-    parser.add_argument("--min-week-hours", type=int, default=160)
-    parser.add_argument("--reports-dir", type=Path, default=Path("reports"))
-    parser.add_argument("--backtest-dir", type=Path, default=Path("backtest_results"))
-    parser.add_argument("--final-template", type=Path, default=Path("reports/final_report_template.md"))
-    parser.add_argument("--final-pdf", type=Path, default=Path("reports/final_report.pdf"))
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=Path, default=defaults["config"])
+    parser.add_argument("--csv", type=Path, default=defaults["csv"])
+    parser.add_argument("--country", default=defaults["country"])
+    parser.add_argument("--market-tz", default=defaults["market_tz"])
+    parser.add_argument("--spike-window-weeks", type=int, default=defaults["spike_window_weeks"])
+    parser.add_argument("--min-mw", type=float, default=defaults["min_mw"])
+
+    parser.add_argument("--train-window-weeks", type=int, default=defaults["train_window_weeks"])
+    parser.add_argument("--review-weeks", type=int, default=defaults["review_weeks"])
+    parser.add_argument("--min-week-hours", type=int, default=defaults["min_week_hours"])
+
+    parser.add_argument("--fast", action="store_true")
+    parser.add_argument("--no-cache", action="store_true")
+    parser.add_argument("--cache-dir", type=Path, default=defaults["cache_dir"])
+
+    parser.add_argument("--only-final", action="store_true")
+    parser.add_argument("--archive", action="store_true")
+    parser.add_argument("--run-id", default=None)
+
+    parser.add_argument("--reports-dir", type=Path, default=defaults["reports_dir"])
+    parser.add_argument("--backtest-dir", type=Path, default=defaults["backtest_dir"])
+    parser.add_argument("--weekly-pdf", type=Path, default=defaults["weekly_pdf"])
+    parser.add_argument("--final-template", type=Path, default=defaults["final_template"])
+    parser.add_argument("--final-pdf", type=Path, default=defaults["final_pdf"])
     parser.add_argument("--overwrite-final-template", action="store_true")
     args = parser.parse_args(argv)
 
-    cols = Columns()
-    df = _read_csv(args.csv)
-
-    required = [cols.datetime, cols.country, cols.price, cols.pumped_gen, cols.pumped_consume]
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise SystemExit(f"Missing required columns: {missing}")
-
-    df = df.loc[df[cols.country] == args.country].copy()
-    if df.empty:
-        raise SystemExit(f"No rows found for country={args.country}")
-
-    df = _add_time_columns(df, cols=cols, market_tz=args.market_tz)
-    df = _add_hourly_features(df, cols=cols, spike_window_weeks=args.spike_window_weeks, min_mw=args.min_mw)
-
-    weekly_all = _weekly_features(df)
-    weekly = weekly_all.loc[weekly_all["n_hours"] >= int(args.min_week_hours)].copy()
-    supervised = _prepare_supervised(weekly)
-
-    feature_cols = [
-        "price_mean",
-        "price_std",
-        "price_p10",
-        "price_p90",
-        "vol_range",
-        "neg_hours",
-        "spike_hours",
-        "pumped_gen_hours",
-        "pumped_pump_hours",
-        "pumped_net_mean",
-        "pumped_net_p10",
-        "pumped_net_p90",
-        "renewable_share_mean",
-        "gas_share_mean",
-        "coal_share_mean",
-        "nuclear_share_mean",
-        "wind_ramp_p90",
-        "solar_ramp_p90",
-        "renewable_ramp_p90",
-        "week_of_year",
-        "month",
-    ]
-    feature_cols = [c for c in feature_cols if c in supervised.columns]
+    cfg = _maybe_load_config(args.config) if args.config else {}
+    _apply_config_defaults(args, defaults, cfg)
 
     args.reports_dir.mkdir(parents=True, exist_ok=True)
     args.backtest_dir.mkdir(parents=True, exist_ok=True)
 
-    weekly_all.to_csv(args.reports_dir / "weekly_features_pl.csv", index=False)
+    feature_version = "v3"
+    cache_enabled = (not bool(args.no_cache))
+    cache_path = None
+    if cache_enabled:
+        args.cache_dir.mkdir(parents=True, exist_ok=True)
+        key = _cache_key(args.csv, args, feature_version=feature_version)
+        cache_path = args.cache_dir / f"{key}.pkl"
 
-    bt = _walk_forward_backtest(supervised, feature_cols=feature_cols, train_window_weeks=args.train_window_weeks)
+    cached = None
+    if cache_enabled and cache_path is not None and cache_path.exists():
+        try:
+            cached = pd.read_pickle(cache_path)
+        except Exception:
+            cached = None
+
+    if cached is None:
+        cols = Columns()
+        df = _read_csv(args.csv)
+        required = [cols.datetime, cols.country, cols.price, cols.pumped_gen, cols.pumped_consume]
+        missing = [c for c in required if c not in df.columns]
+        if missing:
+            raise SystemExit(f"Missing required columns: {missing}")
+
+        df = df.loc[df[cols.country] == args.country].copy()
+        if df.empty:
+            raise SystemExit(f"No rows found for country={args.country}")
+
+        df = _add_time_columns(df, cols=cols, market_tz=args.market_tz)
+        df = _add_hourly_features(df, cols=cols, spike_window_weeks=args.spike_window_weeks, min_mw=args.min_mw)
+
+        weekly_all = _weekly_features(df)
+        weekly = weekly_all.loc[weekly_all["n_hours"] >= int(args.min_week_hours)].copy()
+        supervised = _prepare_supervised(weekly)
+
+        base_feature_cols = [
+            "price_mean",
+            "price_std",
+            "price_p10",
+            "price_p90",
+            "vol_range",
+            "neg_hours",
+            "spike_hours",
+            "pumped_gen_hours",
+            "pumped_pump_hours",
+            "pumped_net_mean",
+            "renewable_share_mean",
+            "gas_share_mean",
+            "coal_share_mean",
+            "nuclear_share_mean",
+            "wind_ramp_p90",
+            "renewable_ramp_p90",
+            "week_of_year",
+            "month",
+        ]
+        if not bool(args.fast):
+            base_feature_cols += ["pumped_net_p10", "pumped_net_p90", "solar_ramp_p90"]
+        feature_cols = [c for c in base_feature_cols if c in supervised.columns]
+
+        bt = _walk_forward_backtest(
+            supervised,
+            feature_cols=feature_cols,
+            train_window_weeks=int(args.train_window_weeks),
+            fast=bool(args.fast),
+        )
+
+        cached = {"df": df, "weekly_all": weekly_all, "weekly": weekly, "bt": bt}
+        if cache_enabled and cache_path is not None:
+            try:
+                pd.to_pickle(cached, cache_path)
+            except Exception:
+                pass
+
+    df = cached["df"]
+    weekly_all = cached["weekly_all"]
+    weekly = cached["weekly"]
+    bt = cached["bt"]
+
+    weekly_all.to_csv(args.reports_dir / "weekly_features_pl.csv", index=False)
     bt.to_csv(args.backtest_dir / "walk_forward_predictions.csv", index=False)
 
-    _plot_interval_backtest(bt, args.backtest_dir / "interval_backtest.png")
-    macro_f1 = _plot_confusion(bt, args.backtest_dir / "direction_confusion.png")
-    _plot_coverage(bt, args.backtest_dir / "coverage_over_time.png")
-    _plot_pred_error(bt, args.backtest_dir / "pred_error_over_time.png")
+    fig_interval = _make_interval_backtest_fig(bt)
+    fig_coverage = _make_coverage_fig(bt)
+    fig_confusion, macro_f1 = _make_confusion_fig(bt)
+    fig_pred_error = _make_pred_error_fig(bt)
+    backtest_figs = {"interval": fig_interval, "coverage": fig_coverage, "confusion": fig_confusion, "pred_error": fig_pred_error}
 
-    pdf_path = args.reports_dir / "weekly_report.pdf"
-    with PdfPages(pdf_path) as pdf:
-        _plot_week_report_page1(df=df, weekly=weekly, out_pdf=pdf)
-        _plot_week_report_page2(weekly=weekly, bt=bt, macro_f1=macro_f1, out_pdf=pdf)
+    # Save backtest figures to disk (optional artifacts), but keep figures open for PDF embedding.
+    _save_fig(fig_interval, args.backtest_dir / "interval_backtest.png", close=False)
+    _save_fig(fig_coverage, args.backtest_dir / "coverage_over_time.png", close=False)
+    _save_fig(fig_confusion, args.backtest_dir / "direction_confusion.png", close=False)
+    _save_fig(fig_pred_error, args.backtest_dir / "pred_error_over_time.png", close=False)
 
-    coverage = float(bt["covered_10_90"].mean()) if len(bt) else float("nan")
-    summary = (
-        "# Weekly report generated\n\n"
-        f"- country: {args.country}\n"
-        f"- market_tz: {args.market_tz}\n"
-        f"- pdf: {pdf_path}\n"
-        f"- backtest_rows: {len(bt)}\n"
-        f"- macro_f1: {macro_f1:.3f}\n"
-        f"- coverage_10_90: {coverage:.3f}\n"
-    )
-    (args.reports_dir / "summary.md").write_text(summary, encoding="utf-8")
+    weekly_review_path = args.reports_dir / "weekly_review.md"
     _write_weekly_review(
         weekly=weekly,
         bt=bt,
         macro_f1=macro_f1,
-        out_path=args.reports_dir / "weekly_review.md",
-        lookback=args.review_weeks,
+        out_path=weekly_review_path,
+        lookback=int(args.review_weeks),
     )
 
-    wrote_template = _write_final_report_template_md(args.final_template, overwrite=bool(args.overwrite_final_template))
-    _write_final_report_pdf(
-        args.final_pdf,
-        df=df,
-        weekly=weekly,
-        bt=bt,
-        macro_f1=macro_f1,
-        country=args.country,
-        market_tz=args.market_tz,
-        spike_window_weeks=args.spike_window_weeks,
-        train_window_weeks=args.train_window_weeks,
-        min_week_hours=args.min_week_hours,
-        review_weeks=args.review_weeks,
-        backtest_dir=args.backtest_dir,
+    coverage = float(bt["covered_10_90"].mean()) if len(bt) else float("nan")
+    summary = (
+        "# 运行摘要\n\n"
+        f"- 市场：{args.country}\n"
+        f"- 时区：{args.market_tz}\n"
+        f"- train_window_weeks：{int(args.train_window_weeks)}\n"
+        f"- fast：{bool(args.fast)}\n"
+        f"- backtest_rows：{len(bt)}\n"
+        f"- Macro-F1：{macro_f1:.3f}\n"
+        f"- coverage_10_90：{coverage:.3f}\n"
+        f"- 周报PDF：{args.weekly_pdf if not bool(args.only_final) else '（未生成）'}\n"
+        f"- 总报告PDF：{args.final_pdf}\n"
+    )
+    (args.reports_dir / "summary.md").write_text(summary, encoding="utf-8")
+
+    wrote_template = _write_final_report_template_md(
+        args.final_template,
+        overwrite=bool(args.overwrite_final_template),
     )
 
-    print(f"Wrote: {pdf_path}")
+    # Write PDFs.
+    args.final_pdf.parent.mkdir(parents=True, exist_ok=True)
+    args.weekly_pdf.parent.mkdir(parents=True, exist_ok=True)
+    with PdfPages(args.final_pdf) as pdf_final:
+        if bool(args.only_final):
+            _write_final_report(
+                pdf_final=pdf_final,
+                pdf_weekly=None,
+                df=df,
+                weekly=weekly,
+                bt=bt,
+                macro_f1=macro_f1,
+                country=args.country,
+                market_tz=args.market_tz,
+                spike_window_weeks=int(args.spike_window_weeks),
+                train_window_weeks=int(args.train_window_weeks),
+                min_week_hours=int(args.min_week_hours),
+                review_weeks=int(args.review_weeks),
+                backtest_figs=backtest_figs,
+                weekly_review_path=weekly_review_path,
+            )
+        else:
+            with PdfPages(args.weekly_pdf) as pdf_weekly:
+                _write_final_report(
+                    pdf_final=pdf_final,
+                    pdf_weekly=pdf_weekly,
+                    df=df,
+                    weekly=weekly,
+                    bt=bt,
+                    macro_f1=macro_f1,
+                    country=args.country,
+                    market_tz=args.market_tz,
+                    spike_window_weeks=int(args.spike_window_weeks),
+                    train_window_weeks=int(args.train_window_weeks),
+                    min_week_hours=int(args.min_week_hours),
+                    review_weeks=int(args.review_weeks),
+                    backtest_figs=backtest_figs,
+                    weekly_review_path=weekly_review_path,
+                )
+
+    # Close figures after PDF writing.
+    for fig in backtest_figs.values():
+        if fig is not None:
+            plt.close(fig)
+
+    # Archive (optional): snapshot key outputs into a run folder.
+    if bool(args.archive):
+        run_id = args.run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = args.reports_dir / "runs" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(args.final_pdf, run_dir / "final_report.pdf")
+        if not bool(args.only_final) and args.weekly_pdf.exists():
+            shutil.copy2(args.weekly_pdf, run_dir / "weekly_report.pdf")
+        for p in [
+            args.reports_dir / "weekly_review.md",
+            args.reports_dir / "summary.md",
+            args.reports_dir / "weekly_features_pl.csv",
+            args.backtest_dir / "walk_forward_predictions.csv",
+        ]:
+            if p.exists():
+                shutil.copy2(p, run_dir / p.name)
+        # Optional figures
+        for name in ["interval_backtest.png", "coverage_over_time.png", "direction_confusion.png", "pred_error_over_time.png"]:
+            p = args.backtest_dir / name
+            if p.exists():
+                shutil.copy2(p, run_dir / name)
+
     if wrote_template:
         print(f"Wrote: {args.final_template}")
+    if not bool(args.only_final):
+        print(f"Wrote: {args.weekly_pdf}")
     print(f"Wrote: {args.final_pdf}")
+    print(f"Wrote: {weekly_review_path}")
     print(f"Wrote: {args.backtest_dir}")
     return 0

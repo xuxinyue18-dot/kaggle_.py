@@ -90,9 +90,9 @@
 
 运行 `python generate_report.py` 后主要输出：
 
-- `reports/weekly_report.pdf`
+- `reports/weekly_report.pdf`（可选：如使用 `--only-final` 则不生成）
 - `reports/final_report_template.md`（总报告模板：仅首次生成；默认不覆盖）
-- `reports/final_report.pdf`（总报告：文字 + 图表 + 摘要；每次运行都会更新）
+- `reports/final_report.pdf`（综合性总报告：文字 + 图表 + 文字分析；每次运行都会更新）
 - `reports/weekly_review.md`
 - `reports/weekly_features_pl.csv`（周频特征表，便于你继续扩展）
 - `backtest_results/walk_forward_predictions.csv`（每周预测、覆盖与方向结果）
@@ -131,10 +131,28 @@ cd euro-electricity-2024-25
 python generate_report.py
 ```
 
+推荐：只生成综合性总报告（更简洁、避免重复 PDF）：
+
+```bash
+python generate_report.py --only-final
+```
+
 常用参数：
 
 ```bash
 python generate_report.py --train-window-weeks 26 --review-weeks 8
+```
+
+更快的本地迭代（减少模型迭代轮数 + 缩减特征集）：
+
+```bash
+python generate_report.py --only-final --fast --review-weeks 4
+```
+
+结果归档（每次运行把关键产物复制到 `reports/runs/<timestamp>/`）：
+
+```bash
+python generate_report.py --only-final --archive
 ```
 
 更多参数：
@@ -142,6 +160,10 @@ python generate_report.py --train-window-weeks 26 --review-weeks 8
 ```bash
 python generate_report.py --train-window-weeks 52 --review-weeks 8 --spike-window-weeks 8 --min-week-hours 160
 ```
+
+配置文件（可选）：`final_report_config.yaml`
+
+默认会读取该文件，并仅在参数仍为默认值时应用配置（显式 CLI 参数优先生效）。
 
 如果需要更新总报告模板（平时不需要），可以显式覆盖：
 

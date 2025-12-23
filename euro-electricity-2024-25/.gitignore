@@ -1,5 +1,20 @@
 data/raw/
 
-# Re-include small, reproducible artifacts for portfolio/demo
+# Generated artifacts (keep repo small; regenerate locally)
+reports/*.pdf
+!reports/final_report.pdf
+
+reports/*.md
+!reports/final_report_template.md
+!reports/weekly_review.md
+
+reports/cache/
+reports/runs/
+reports/pl_pumped/
+
+backtest_results/*.png
+backtest_results/runs/
+
+# Re-include small, reproducible tables
 !reports/weekly_features_pl.csv
 !backtest_results/walk_forward_predictions.csv
