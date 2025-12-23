@@ -1,0 +1,11 @@
+{
+  "id": "xuxinyue18/ps5e12-cat-lgbm",
+  "title": "PS5E12 Cat-LGBM",
+  "code_file": "kernel_main.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": false,
+  "competition_sources": ["playground-series-s5e12"]
+}

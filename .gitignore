@@ -1,0 +1,31 @@
+__pycache__/
+*.py[cod]
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+.ipynb_checkpoints/
+
+.DS_Store
+Thumbs.db
+
+# Data/artifacts (keep local, don't push)
+*.csv
+*.zip
+*.parquet
+*.feather
+*.joblib
+*.pkl
+*.pickle
+*.onnx
+*.pt
+*.pth
+
+# Logs / model outputs
+*.log
+*.tfevents*
+catboost_info/
+
+# Project-specific raw data location
+playground-series-s5e12/data/raw/
