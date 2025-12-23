@@ -1,0 +1,5 @@
+data/raw/
+
+# Re-include small, reproducible artifacts for portfolio/demo
+!reports/weekly_features_pl.csv
+!backtest_results/walk_forward_predictions.csv
